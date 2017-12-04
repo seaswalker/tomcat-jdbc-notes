@@ -155,7 +155,5 @@ private static synchronized void registerCleaner(PoolCleaner cleaner) {
 
 从这里可以得到几点重要的信息:
 
-1. tomcat的连接池**全局只有一个Timer对象，所有web app持有连接池对象均是通过这一个Timer进行调度**。这一点是如何保证的呢?
-
-   从源码中可以看出，
+1. 每个连接池
 

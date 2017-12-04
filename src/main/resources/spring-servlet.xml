@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:mvc="http://www.springframework.org/schema/mvc"
+       xmlns:context="http://www.springframework.org/schema/context"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans
+            http://www.springframework.org/schema/beans/spring-beans-4.3.xsd
+            http://www.springframework.org/schema/context
+            http://www.springframework.org/schema/context/spring-context-4.3.xsd
+            http://www.springframework.org/schema/mvc
+            http://www.springframework.org/schema/mvc/spring-mvc-4.3.xsd ">
+
+    <context:component-scan base-package="controller"/>
+    <mvc:annotation-driven/>
+    <mvc:default-servlet-handler/>
+
+    <bean class="org.springframework.beans.factory.config.PropertyPlaceholderConfigurer">
+        <property name="location" value="data-source.properties" />
+    </bean>
+
+    <bean class="org.springframework.web.servlet.view.UrlBasedViewResolver">
+        <property name="viewClass" value="org.springframework.web.servlet.view.JstlView"></property>
+        <property name="prefix" value="/WEB-INF/"></property>
+        <property name="suffix" value=".jsp"></property>
+    </bean>
+
+    <bean id="dataSource" class="org.apache.tomcat.jdbc.pool.DataSource" destroy-method="close">
+        <property name="username" value="${dataSource.username}" />
+        <property name="password" value="${dataSource.password}" />
+        <property name="url" value="${dataSource.url}" />
+        <property name="driverClassName" value="${dataSource.driverClassName}" />
+        <property name="jmxEnabled" value="${dataSource.jxmEnabled}" />
+        <property name="testWhileIdle" value="${dataSource.testWhileIdle}" />
+        <property name="testOnBorrow" value="${dataSource.testOnBorrow}" />
+        <property name="maxActive" value="${dataSource.maxActive}" />
+        <property name="validationQuery" value="${dataSource.validationQuery}" />
+    </bean>
+
+</beans>
