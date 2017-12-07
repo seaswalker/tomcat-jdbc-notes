@@ -6,6 +6,7 @@
 
     <groupId>skywalker</groupId>
     <artifactId>tomcat-jdbc-notes</artifactId>
+    <packaging>war</packaging>
     <version>1.0-SNAPSHOT</version>
 
     <properties>
@@ -87,20 +88,6 @@
                     <debug>false</debug>
                     <source>1.8</source>
                     <target>1.8</target>
-                </configuration>
-            </plugin>
-            <!-- maven tomcat插件用 -->
-            <plugin>
-                <groupId>org.apache.tomcat.maven</groupId>
-                <artifactId>tomcat7-maven-plugin</artifactId>
-                <version>2.2</version>
-                <configuration>
-                    <port>8080</port>
-                    <path>/spring</path>
-                    <uriEncoding>UTF-8</uriEncoding>
-                    <server>TomcatServer</server>
-                    <username>tiger</username>
-                    <password>tiger</password>
                 </configuration>
             </plugin>
         </plugins>

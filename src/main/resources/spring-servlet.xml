@@ -15,16 +15,16 @@
     <mvc:default-servlet-handler/>
 
     <bean class="org.springframework.beans.factory.config.PropertyPlaceholderConfigurer">
-        <property name="location" value="data-source.properties" />
+        <property name="location" value="classpath:data-source.properties" />
     </bean>
 
     <bean class="org.springframework.web.servlet.view.UrlBasedViewResolver">
         <property name="viewClass" value="org.springframework.web.servlet.view.JstlView"></property>
-        <property name="prefix" value="/WEB-INF/"></property>
+        <property name="prefix" value="/WEB-INF/jsp/"></property>
         <property name="suffix" value=".jsp"></property>
     </bean>
 
-    <bean id="dataSource" class="org.apache.tomcat.jdbc.pool.DataSource" destroy-method="close">
+    <bean id="dataSource" class="org.apache.tomcat.jdbc.pool.DataSource" destroy-method="close" lazy-init="false">
         <property name="username" value="${dataSource.username}" />
         <property name="password" value="${dataSource.password}" />
         <property name="url" value="${dataSource.url}" />
@@ -34,6 +34,7 @@
         <property name="testOnBorrow" value="${dataSource.testOnBorrow}" />
         <property name="maxActive" value="${dataSource.maxActive}" />
         <property name="validationQuery" value="${dataSource.validationQuery}" />
+        <property name="jdbcInterceptors" value="org.apache.tomcat.jdbc.pool.interceptor.ConnectionState(useEquals=true,fast=yes)" />
     </bean>
 
 </beans>

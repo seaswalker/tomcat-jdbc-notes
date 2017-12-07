@@ -75,7 +75,7 @@ public class ConnectionPool {
 }
 ```
 
-由两个队列组成: 忙队列和空闲队列，嗯，和我在上家公司实现的一个对象池的思路是一样的。idle队列默认就是用的公平队列的实现，这个是做什么用的在后面会提到。
+由两个队列组成: 忙队列和空闲队列，嗯，和在上家公司实现的一个对象池的思路是一样的。idle队列默认就是用的公平队列的实现，这个是做什么用的在后面会提到。
 
 ## 空闲连接清理器
 
@@ -153,7 +153,152 @@ private static synchronized void registerCleaner(PoolCleaner cleaner) {
 }
 ```
 
-从这里可以得到几点重要的信息:
+从这里可以得到几点重要的信息。
 
-1. 每个连接池
+### 全局调度器
+
+**在Tomcat全局范围内只会有一个用于执行清理任务的Timer对象**，即poolCleanTimer只会被初始化一次，初始化的时机是第一个使用了Tomcat连接池的web app启动时。
+
+这一点可以通过一个简单的接口得以印证:
+
+```java
+@RequestMapping(value = "/hello", method = RequestMethod.GET)
+public String hello() {
+    System.out.println("系统加载器: " + ClassLoader.getSystemClassLoader());
+    System.out.println("ConnectionPool类加载器: " + ConnectionPool.class.getClassLoader());
+    System.out.println("应用类加载器: " + SimpleController.class.getClassLoader());
+    return "hello";
+}
+```
+
+请求此接口后控制台打印为:
+
+```html
+系统加载器: sun.misc.Launcher$AppClassLoader@764c12b6
+ConnectionPool类加载器: java.net.URLClassLoader@5e265ba4
+应用类加载器: ParallelWebappClassLoader
+  context: jdbc
+  delegate: false
+----------> Parent Classloader:
+java.net.URLClassLoader@5e265ba4
+```
+
+用下图回顾以下Tomcat的类加载器体系:
+
+```htm
+       Bootstrap
+          |
+       System
+          |
+       Common
+       /     \
+  Webapp1   Webapp2 ...
+```
+
+所以ConnectionPool由Common类加载器加载，再结合poolCleanTimer的静态属性，所以可以得出以上结论。
+
+用下图表示上述的逻辑关系:
+
+![ConnectionPoolTimer](images/connection_pool_timer.png)
+
+### 调度器关闭
+
+每个PoolCleaner对象均被保存在ConnectionPool中全局唯一的Set中，当对PoolCleaner进行取消注册操作时会检查此Set是否为空，如果是，那么将此调度Timer关闭。ConnectionPool.unregisterCleaner:
+
+```java
+private static synchronized void unregisterCleaner(PoolCleaner cleaner) {
+    boolean removed = cleaners.remove(cleaner);
+    if (removed) {
+        cleaner.cancel();
+        if (poolCleanTimer != null) {
+            poolCleanTimer.purge();
+            if (cleaners.size() == 0) {
+                poolCleanTimer.cancel();
+                poolCleanTimer = null;
+            }
+        }
+    }
+}
+```
+
+那么此方法在现实中是从哪里被触发的呢?
+
+如果我们在Spring中配置了终结方法:
+
+```xml
+<bean id="dataSource" class="org.apache.tomcat.jdbc.pool.DataSource" destroy-method="close" />
+```
+
+那么DataSource的close方法最终会触发此操作，但是如果我们就是不配置`destroy-method`属性呢?
+
+### 弱引用
+
+从PoolCleaner构造器源码中可以看出，PoolCleaner持有的是对ConnectionPool的弱引用，**一旦进行垃圾回收，便会将只有被弱引用指向的对象回收**。
+
+所以如果当web app关闭时如果没有显示的回收/关闭ConnectionPool，此时JVM中唯一指向该ConnectionPool的便是PoolCleaner，使用弱引用便不会妨碍连接池的正常回收，以防止出现内存泄漏。
+
+不过这里还有一个问题，当PoolCleaner对象对应的连接池被回收时，PoolCleaner自己还会存在吗?
+
+答案位于PoolCleaner的run方法中，部分源码:
+
+```java
+@Override
+public void run() {
+    ConnectionPool pool = this.pool.get();
+    if (pool == null) {
+        stopRunning();
+    }
+    //...
+}
+```
+
+自己将会从全局Set中移除自己。
+
+## 拦截器
+
+Tomat提供了JdbcInterceptor接口用以拦截每次对数据连接的操作，配置方式:
+
+```xml
+<bean id="dataSource" class="org.apache.tomcat.jdbc.pool.DataSource" destroy-method="close">
+    <property name="jdbcInterceptors" 
+        value="org.apache.tomcat.jdbc.pool.interceptor.ConnectionState(useEquals=true)"/>
+</bean>
+```
+
+类图如下:
+
+![拦截器](images/jdbc_interceptor.png)
+
+可以看出，查询超时控制、JMX报告等功能均是通过拦截器实现。初始化过程最关键的是对拦截器poolStarted回掉方法的调用，这个以后应该会用到。
+
+## 连接预创建
+
+如果我们配置了initialSize且大于零，那么连接池将预创建指定数量的连接。预创建的过程与获取连接的过程基本一致，唯一的区别在于不进行等待。
+
+到这里初始化的流程就走完了。
+
+# 创建连接
+
+这部分是连接获取的基础，由ConnectionPool的createConnection方法完成，数据库连接被包装成PooledConnection对象:
+
+![PoolConnection](images/pool_connection.png)
+
+创建过程可以细分为以下三步。
+
+## 加锁
+
+PooledConnection对象被创建后首先会对其进行加锁，其它所有后续操作均是在锁的保护下进行，简略版源码:
+
+```java
+protected PooledConnection createConnection(long now, PooledConnection notUsed, 
+                                            String username, String password) {
+    PooledConnection con = create(false);
+    try {   
+        con.lock();
+        //...
+    } finally {
+        con.unlock();
+    }
+}
+```
 

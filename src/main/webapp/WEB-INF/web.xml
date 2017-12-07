@@ -7,7 +7,6 @@
         <welcome-file>index.jsp</welcome-file>
     </welcome-file-list>
 
-    <!-- 中文过滤器 -->
     <filter>
         <filter-name>EncodeFilter</filter-name>
         <filter-class>org.springframework.web.filter.CharacterEncodingFilter</filter-class>
@@ -25,11 +24,9 @@
         <url-pattern>/*</url-pattern>
     </filter-mapping>
 
-    <!-- 配置SpringMVC -->
     <servlet>
         <servlet-name>SpringMVC</servlet-name>
         <servlet-class>org.springframework.web.servlet.DispatcherServlet</servlet-class>
-        <!-- 配置文件位置 -->
         <init-param>
             <param-name>contextConfigLocation</param-name>
             <param-value>classpath:spring-servlet.xml</param-value>
