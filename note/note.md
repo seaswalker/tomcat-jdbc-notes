@@ -302,3 +302,97 @@ protected PooledConnection createConnection(long now, PooledConnection notUsed,
 }
 ```
 
+## 物理连接
+
+这里以驱动的方式连接为例，由PooledConnection.connectUsingDriver方法完成，精简源码:
+
+```java
+protected void connectUsingDriver() {
+    driver = (java.sql.Driver) ClassLoaderUtil.loadClass(
+        poolProperties.getDriverClassName(), PooledConnection.class.getClassLoader(),
+        Thread.currentThread().getContextClassLoader()).newInstance();
+    connection = DriverManager.getConnection(driverURL, properties);
+}
+```
+
+就是普通的jdbc驱动连接。
+
+## 属性设置
+
+在这一步中会把我们配置的连接属性设置到新创建的Connection中，这一步由PooledConnection.connect完成，部分源码:
+
+```java
+public void connect() {
+    if (poolProperties.getJdbcInterceptors()==null || 
+        poolProperties.getJdbcInterceptors().indexOf(ConnectionState.class.getName())<0 ||
+        poolProperties.getJdbcInterceptors().indexOf(ConnectionState.class.getSimpleName())<0) {
+        if (poolProperties.getDefaultTransactionIsolation()!=
+            DataSourceFactory.UNKNOWN_TRANSACTIONISOLATION) 
+            connection.setTransactionIsolation(poolProperties.getDefaultTransactionIsolation());
+        if (poolProperties.getDefaultReadOnly()!=null) 
+            connection.setReadOnly(poolProperties.getDefaultReadOnly().booleanValue());
+        if (poolProperties.getDefaultAutoCommit()!=null) 
+            connection.setAutoCommit(poolProperties.getDefaultAutoCommit().booleanValue());
+        if (poolProperties.getDefaultCatalog()!=null) 
+            connection.setCatalog(poolProperties.getDefaultCatalog());
+    }
+}
+```
+
+从这里可以看出，当没有ConnectionState拦截器时才会进行设置，读到这里，有一个强烈的疑问: 拦截器是在什么时候以及以如何方式起作用的?
+
+## 初始连接校验
+
+如果需要(开启了testOnConnect参数)，那么连接池将对新创建的连接进行校验，以判断其是否有效。校验由PooledConnection的validate方法完成:
+
+```java
+public boolean validate(int validateAction,String sql) {
+    //1
+    long now = System.currentTimeMillis();
+    if (validateAction!=VALIDATE_INIT &&
+        poolProperties.getValidationInterval() > 0 && (now - this.lastValidated) <
+        poolProperties.getValidationInterval()) {
+        return true;
+    }
+    
+    //2
+    if (poolProperties.getValidator() != null) {
+        if (poolProperties.getValidator().validate(connection, validateAction)) {
+            this.lastValidated = now;
+            return true;
+        } else {
+            return false;
+        }
+    }
+    
+    String query = sql;
+
+    if (validateAction == VALIDATE_INIT && poolProperties.getInitSQL() != null) {
+        query = poolProperties.getInitSQL();
+    }
+
+    if (query == null) {
+        query = poolProperties.getValidationQuery();
+    }
+    
+    Statement stmt = null;
+    stmt = connection.createStatement();
+
+    int validationQueryTimeout = poolProperties.getValidationQueryTimeout();
+    if (validationQueryTimeout > 0) {
+        stmt.setQueryTimeout(validationQueryTimeout);
+    }
+
+    stmt.execute(query);
+    stmt.close();
+    this.lastValidated = now;
+    return true;
+}
+```
+
+从1处可以看出，这里采用了校验间隔控制校验的频率，如果尚未到达下次可以校验的时间点，那么直接返回。
+
+2处说明tomcat-jdbc连接池提供了自定义校验器的方式让我们自己定义校验的逻辑，接口的定义:
+
+![校验器](images/validator.png)
+
