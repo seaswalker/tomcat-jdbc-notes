@@ -35,6 +35,8 @@
         <property name="maxActive" value="${dataSource.maxActive}" />
         <property name="validationQuery" value="${dataSource.validationQuery}" />
         <property name="jdbcInterceptors" value="org.apache.tomcat.jdbc.pool.interceptor.ConnectionState(useEquals=true,fast=yes)" />
+        <property name="validatorClassName" value="skywalker.SimpleValidator" />
+        <property name="maxAge" value="10000" />
     </bean>
 
 </beans>

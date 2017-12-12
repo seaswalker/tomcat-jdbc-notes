@@ -396,3 +396,65 @@ public boolean validate(int validateAction,String sql) {
 
 ![校验器](images/validator.png)
 
+我们可以通过以下配置:
+
+```xml
+<property name="validatorClassName" value="skywalker.SimpleValidator" />
+```
+
+之后执行校验的逻辑就很简单了，就是喜闻乐见的jdbc SQL语句执行，我们这里配置的是最简单的SQL:
+
+```sql
+select 1;
+```
+
+## 加入"忙"队列
+
+为什么加入的是忙队列?注意创建连接操作的触发场景: 尝试获取连接。ConnectionPool.createConnection相关源码:
+
+```java
+protected PooledConnection createConnection(long now, PooledConnection notUsed, 
+                                            String username, String password) {
+    if (!busy.offer(con)) {
+        log.debug("Connection doesn't fit into busy array, connection will not be traceable.");
+    }
+}
+```
+
+# 连接获取
+
+共分为两步: 获取和**拦截器触发**。
+
+## 获取
+
+核心逻辑由ConnectionPool.borrowConnection方法实现，按照执行顺序分为以下几步。
+
+### 获取空闲连接
+
+```java
+private PooledConnection borrowConnection(int wait, String username, String password) {
+    PooledConnection con = idle.poll();
+    while (true) {
+        if (con!=null) {
+            PooledConnection result = borrowConnection(now, con, username, password);
+            if (result!=null) return result;
+        }
+        //...
+    }
+}
+```
+
+重载的borrowConnection方法不再贴出源码，它做了这么几项工作:
+
+- 如果配置了maxAge属性，如下:
+
+  ```xml
+  <property name="maxAge" value="10000" />
+  ```
+
+  那么将检查当前是否达到了maxAge，如果达到将直接关闭现有连接并进行重连。默认为0，即不做此项检查。
+
+- 如果没有配置maxAge属性，那么再次进行校验(如果达到了指定的时间间隔)。‘
+
+- 将连接加入到busyQueue。
+
