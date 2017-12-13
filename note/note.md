@@ -458,3 +458,207 @@ private PooledConnection borrowConnection(int wait, String username, String pass
 
 - 将连接加入到busyQueue。
 
+
+### 尝试创建
+
+如果当前没有空闲的连接且已有连接数尚未到达上限，那么连接池将会尝试创建一个新的连接，相关源码:
+
+```java
+private PooledConnection borrowConnection(int wait, String username, String password) {
+    //...
+    while (true) {
+        //...
+        if (size.get() < getPoolProperties().getMaxActive()) {
+            //atomic duplicate check
+            if (size.addAndGet(1) > getPoolProperties().getMaxActive()) {
+                //if we got here, two threads passed through the first if
+                size.decrementAndGet();
+            } else {
+                //create a connection, we're below the limit
+                return createConnection(now, con, username, password);
+            }
+        }
+        //...
+    }
+}
+```
+
+这里唯一值得学习的就是双重CAS检查现有连接数是否小于最大连接数。
+
+### 循环等待
+
+如果当前没有空闲连接并且无法创建新的连接，那么将会使当前线程进行循环等待，直到**获取到连接或者达到了超时时间**:
+
+```java
+private PooledConnection borrowConnection(int wait, String username, String password) {
+    //...
+    long now = System.currentTimeMillis();
+    while (true) {
+        long maxWait = wait;
+        //if the passed in wait time is -1, means we should use the pool property value
+        if (wait==-1) {
+            maxWait = (getPoolProperties().getMaxWait()<=0)?
+                Long.MAX_VALUE:getPoolProperties().getMaxWait();
+        }
+        long timetowait = Math.max(0, maxWait - (System.currentTimeMillis() - now));
+        
+        try {
+            con = idle.poll(timetowait, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException ex) {
+            throw new SQLException("Pool wait interrupted.");
+        }
+        
+        //we didn't get a connection, lets see if we timed out
+        if (con == null) {
+            if ((System.currentTimeMillis() - now) >= maxWait) {
+                throw new PoolExhaustedException("[" + Thread.currentThread().getName()+"] " +
+                    "Timeout: Pool empty. Unable to fetch a connection in " + (maxWait / 1000)                      +" seconds, none available[size:"+size.get() +"; busy:"+busy.size()+
+                    "; idle:"+idle.size()+"; lastwait:"+timetowait+"].");
+            } else {
+                //no timeout, lets try again
+                continue;
+            }
+        }
+        //...
+    }
+}
+```
+
+整体的逻辑还是很容易理解的，这里只提一点，wait在无参getConnection方法中传过来的是-1，这会导致连接池去获取maxWait参数，如果此参数为非正数，那么取long型最大值毫秒，即约292万世纪。
+
+所以真正在生产环境使用时可以配置maxWait参数。
+
+## 准备
+
+这一步由ConnectionPool.setupConnection方法完成，从逻辑上可以分为以下几步。
+
+### 拦截器链
+
+```java
+protected Connection setupConnection(PooledConnection con) throws SQLException {
+    JdbcInterceptor handler = con.getHandler();
+    if (handler==null) {
+        handler = new ProxyConnection(this,con,getPoolProperties().isUseEquals());
+        PoolProperties.InterceptorDefinition[] proxies = 
+                                            getPoolProperties().getJdbcInterceptorsAsArray();
+        for (int i=proxies.length-1; i>=0; i--) {
+            try {
+                JdbcInterceptor interceptor = proxies[i].getInterceptorClass().newInstance();
+                interceptor.setProperties(proxies[i].getProperties());
+                interceptor.setNext(handler);
+                interceptor.reset(this, con);
+                handler = interceptor;
+            }catch(Exception x) {
+                throw SQLException("Unable to instantiate interceptor chain.");
+            }
+        }
+        con.setHandler(handler);
+    } else {
+        JdbcInterceptor next = handler;
+        while (next!=null) {
+            next.reset(this, con);
+            next = next.getNext();
+        }
+    }
+    //...
+}
+```
+
+直接让栗子说话，假设我们配置了如下两个拦截器:
+
+```xml
+<property name="jdbcInterceptors" 
+    value="org.apache.tomcat.jdbc.pool.interceptor.ConnectionState(useEquals=true,fast=yes);
+                  org.apache.tomcat.jdbc.pool.interceptor.SlowQueryReport" />
+```
+
+那么形成的调用链如下图:
+
+![拦截器链](images/interceptor_chain.png)
+
+即配置在最后的拦截器拥有最高的优先级。
+
+ProxyConnection为默认添加，其作用是**最后调用java.sql.Connection的相应方法**，这里给它起个名字，就叫"守门员"。
+
+守门员的invoke方法源码证明了这一点:
+
+```java
+@Override
+public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+    PooledConnection poolc = connection;
+    if (poolc!=null) {
+        return method.invoke(poolc.getConnection(),args);
+    }
+}
+```
+
+tomcat-jdbc-pool中所有拦截器均继承自抽象类JdbcInterceptor，其公有的invoke方法实现保证了请求可以沿着拦截器链继续向下执行(如果需要):
+
+```java
+@Override
+public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+    if (getNext()!=null) return getNext().invoke(proxy,method,args);
+    else throw new NullPointerException();
+}
+```
+
+**连接池中的每一个连接均有自己的拦截器链**，换句话说，每个连接持有的是每个拦截器的不同实例。
+
+对于每一个连接，**拦截器链只会生成一次**，生成之后保存在PooledConnection的handler属性中，注意，这里保存的是拦截器链的第一个拦截器。
+
+如果发现拦截器链已经存在，那么将会依次遍历拦截器链中的每一个拦截器，调用其reset方法对其进行重置。
+
+### 代理类
+
+拦截器从本质上来说是一个InvocationHandler，所以如果想要我们的拦截器链生效，最后一步便是生成代理类。
+
+```java
+protected Connection setupConnection(PooledConnection con) {
+    //...
+    //TODO possible optimization, keep track if this connection was returned properly, 
+    //and don't generate a new facade
+    getProxyConstructor(con.getXAConnection() != null);
+    return (Connection)proxyClassConstructor.newInstance(new Object[] {handler});
+}
+```
+
+proxyClassConstructor是生成的代理类的构造器，这里将其保存到内部属性中，为了省去反射获取构造器的过程，话说谁会蠢到每次都要反射去获取构造器?
+
+但是这里为什么每次都要新创建一个代理类的对象呢?我是没想到有哪种场景需要这样。
+
+# 连接关闭
+
+守门员对Connection的close方法进行了拦截，其invoke方法相关源码:
+
+```java
+@Override
+public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
+    //...
+    if (compare(CLOSE_VAL,method)) {
+        if (connection==null) return null; //noop for already closed.
+        PooledConnection poolc = this.connection;
+        this.connection = null;
+        pool.returnConnection(poolc);
+        return null;
+    }
+    //...
+}
+```
+
+returnConnection方法的逻辑也很容易理解: 将连接从busyQueue中移除，加入到idleQueue，如果有必要先进行可用性校验。
+
+# 拦截器展览
+
+常用的拦截器有StatementCache、SlowQueryReport、QueryTimeoutInterceptor(设置每个Statement的超时时间)等，这些东西的原理用后脚跟也能猜到，不说了。。。
+
+# JMX
+
+一直以来，自己在阅读源码的过程中都是将JMX当作黑盒来处理，在这里借此机会对这一部分进行梳理。
+
+首先引用一段Tomcat的官方文档对jmx的说明:
+
+> The connection pool object exposes an MBean that can be registered. In order for the connection pool object to create the MBean, the flag `jmxEnabled` has to be set to true. This doesn't imply that the pool will be registered with an MBean server, merely that the MBean is created. In a container like Tomcat, Tomcat itself registers the DataSource with the MBean server, the `org.apache.tomcat.jdbc.pool.DataSource` object will then register the actual connection pool MBean. If you're running outside of a container, you can register the DataSource yourself under any object name you specify, and it propagates the registration to the underlying pool. To do this you would call `mBeanServer.registerMBean(dataSource.getPool().getJmxPool(),objectname)`. Prior to this call, ensure that the pool has been created by calling `dataSource.createPool()`.
+
+即如果连接池模块运行在tomcat中并且如果tomcat开启了jmx，那么连接池的jmx将会自动被注册到jmx服务中，但是如果没有运行在tomcat容器或者没有启用jmx，那么我们只能手动进行jmx服务的注册与启用。
+
+下面我们结合常用的Spring环境(不开启Tomcat jmx)进行说明。
