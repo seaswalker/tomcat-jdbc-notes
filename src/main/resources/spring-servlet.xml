@@ -10,18 +10,23 @@
             http://www.springframework.org/schema/mvc
             http://www.springframework.org/schema/mvc/spring-mvc-4.3.xsd ">
 
-    <context:component-scan base-package="controller"/>
+    <context:component-scan base-package="controller,mq"/>
     <mvc:annotation-driven/>
     <mvc:default-servlet-handler/>
 
     <bean class="org.springframework.beans.factory.config.PropertyPlaceholderConfigurer">
-        <property name="location" value="classpath:data-source.properties" />
+        <property name="locations">
+            <list>
+                <value>classpath:data-source.properties</value>
+                <value>classpath:activemq.properties</value>
+            </list>
+        </property>
     </bean>
 
     <bean class="org.springframework.web.servlet.view.UrlBasedViewResolver">
-        <property name="viewClass" value="org.springframework.web.servlet.view.JstlView"></property>
-        <property name="prefix" value="/WEB-INF/jsp/"></property>
-        <property name="suffix" value=".jsp"></property>
+        <property name="viewClass" value="org.springframework.web.servlet.view.JstlView"/>
+        <property name="prefix" value="/WEB-INF/jsp/"/>
+        <property name="suffix" value=".jsp"/>
     </bean>
 
     <bean id="dataSource" class="org.apache.tomcat.jdbc.pool.DataSource" destroy-method="close" lazy-init="false">
@@ -38,6 +43,55 @@
                   value="org.apache.tomcat.jdbc.pool.interceptor.ConnectionState(useEquals=true,fast=yes);
                   org.apache.tomcat.jdbc.pool.interceptor.SlowQueryReport" />
         <property name="maxAge" value="10000" />
+    </bean>
+
+    <!-- activemq producer and consumer -->
+    <bean id="connectionFactory" class="org.apache.activemq.ActiveMQConnectionFactory">
+        <property name="brokerURL" value="${activemq.broker}"/>
+        <property name="userName" value="${activemq.username}"/>
+        <property name="password" value="${activemq.password}"/>
+        <property name="connectionIDPrefix" value="test-"/>
+    </bean>
+
+    <!-- Spring提供的JMS工具类，它可以进行消息发送、接收等 -->
+    <bean id="jmsTemplate" class="org.springframework.jms.core.JmsTemplate">
+        <property name="connectionFactory" ref="connectionFactory"/>
+        <property name="deliveryMode" value="2" />
+        <property name="explicitQosEnabled" value="true" />
+        <property name="messageIdEnabled" value="true" />
+        <property name="messageTimestampEnabled" value="true"/>
+        <property name="sessionAcknowledgeMode" value="2" />
+    </bean>
+
+    <bean id="testQueue" class="org.apache.activemq.command.ActiveMQQueue">
+        <constructor-arg value="${activemq.queue}"/>
+    </bean>
+
+    <bean id="testTopic" class="org.apache.activemq.command.ActiveMQTopic">
+        <constructor-arg value="${activemq.topic}" />
+    </bean>
+
+    <bean id="virtualTopic" class="org.apache.activemq.command.ActiveMQTopic">
+        <constructor-arg value="${activemq.virtualTopic}" />
+    </bean>
+
+    <bean id="virtualTopicConsumer" class="org.apache.activemq.command.ActiveMQQueue">
+        <constructor-arg value="${activemq.virtualTopic.consumer}" />
+    </bean>
+
+    <bean id="simpleListener" class="mq.SimpleListener"/>
+    <bean id="virtualTopicListener" class="mq.VirtualTopicListener"/>
+
+    <bean class="org.springframework.jms.listener.DefaultMessageListenerContainer">
+        <property name="connectionFactory" ref="connectionFactory" />
+        <property name="destination" ref="virtualTopicConsumer" />
+        <property name="messageListener" ref="virtualTopicListener" />
+        <property name="concurrentConsumers" value="1"/>
+        <property name="maxConcurrentConsumers" value="1"/>
+        <property name="sessionTransacted" value="true" />
+        <property name="clientId" value="A" />
+        <!--<property name="subscriptionDurable" value="true" />
+        <property name="clientId" value="test_topic_subscriber_1" />-->
     </bean>
 
 </beans>
