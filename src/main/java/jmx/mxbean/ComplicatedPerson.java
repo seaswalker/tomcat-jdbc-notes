@@ -3,7 +3,7 @@ package jmx.mxbean;
 /**
  * {@inheritDoc}
  *
- * @author zhao.xudong
+ * @author skywalker
  */
 public class ComplicatedPerson implements ComplicatedPersonMXBean {
 

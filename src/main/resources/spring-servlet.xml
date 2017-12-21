@@ -10,7 +10,7 @@
             http://www.springframework.org/schema/mvc
             http://www.springframework.org/schema/mvc/spring-mvc-4.3.xsd ">
 
-    <context:component-scan base-package="controller,mq"/>
+    <context:component-scan base-package="controller"/>
     <mvc:annotation-driven/>
     <mvc:default-servlet-handler/>
 
@@ -45,15 +45,23 @@
         <property name="maxAge" value="10000" />
     </bean>
 
+    <bean class="org.springframework.jmx.export.MBeanExporter">
+        <property name="beans">
+            <map>
+                <entry key="org.apache.tomcat.jdbc.pool.jmx:type=ConnectionPool" value="#{dataSource.getPool().getJmxPool()}"/>
+            </map>
+        </property>
+    </bean>
+
     <!-- activemq producer and consumer -->
-    <bean id="connectionFactory" class="org.apache.activemq.ActiveMQConnectionFactory">
+    <!--<bean id="connectionFactory" class="org.apache.activemq.ActiveMQConnectionFactory">
         <property name="brokerURL" value="${activemq.broker}"/>
         <property name="userName" value="${activemq.username}"/>
         <property name="password" value="${activemq.password}"/>
         <property name="connectionIDPrefix" value="test-"/>
     </bean>
 
-    <!-- Spring提供的JMS工具类，它可以进行消息发送、接收等 -->
+    &lt;!&ndash; Spring提供的JMS工具类，它可以进行消息发送、接收等 &ndash;&gt;
     <bean id="jmsTemplate" class="org.springframework.jms.core.JmsTemplate">
         <property name="connectionFactory" ref="connectionFactory"/>
         <property name="deliveryMode" value="2" />
@@ -90,8 +98,8 @@
         <property name="maxConcurrentConsumers" value="1"/>
         <property name="sessionTransacted" value="true" />
         <property name="clientId" value="A" />
-        <!--<property name="subscriptionDurable" value="true" />
-        <property name="clientId" value="test_topic_subscriber_1" />-->
+        &lt;!&ndash;<property name="subscriptionDurable" value="true" />
+        <property name="clientId" value="test_topic_subscriber_1" />&ndash;&gt;
     </bean>
-
+-->
 </beans>

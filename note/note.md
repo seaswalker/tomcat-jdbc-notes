@@ -654,11 +654,69 @@ returnConnection方法的逻辑也很容易理解: 将连接从busyQueue中移�
 # JMX
 
 一直以来，自己在阅读源码的过程中都是将JMX当作黑盒来处理，在这里借此机会对这一部分进行梳理。
+关于jmx基础的学习，可以参考:
 
-首先引用一段Tomcat的官方文档对jmx的说明:
+[JMX学习笔记(一)-MBean](http://tuhaitao.iteye.com/blog/786391)
 
-> The connection pool object exposes an MBean that can be registered. In order for the connection pool object to create the MBean, the flag `jmxEnabled` has to be set to true. This doesn't imply that the pool will be registered with an MBean server, merely that the MBean is created. In a container like Tomcat, Tomcat itself registers the DataSource with the MBean server, the `org.apache.tomcat.jdbc.pool.DataSource` object will then register the actual connection pool MBean. If you're running outside of a container, you can register the DataSource yourself under any object name you specify, and it propagates the registration to the underlying pool. To do this you would call `mBeanServer.registerMBean(dataSource.getPool().getJmxPool(),objectname)`. Prior to this call, ensure that the pool has been created by calling `dataSource.createPool()`.
+系列博客，jmx包下有相关的测试代码，可以运行起来再结合jconsole观察效果。
 
-即如果连接池模块运行在tomcat中并且如果tomcat开启了jmx，那么连接池的jmx将会自动被注册到jmx服务中，但是如果没有运行在tomcat容器或者没有启用jmx，那么我们只能手动进行jmx服务的注册与启用。
+对于tomcat-jdbc连接池来说，jmx的初始化位于org.apache.tomcat.jdbc.pool.ConnectionPool中的init方法触发，相关源码:
 
-下面我们结合常用的Spring环境(不开启Tomcat jmx)进行说明。
+```java
+protected void init(PoolConfiguration properties) throws SQLException {
+    //..
+    //create JMX MBean
+    if (this.getPoolProperties().isJmxEnabled()) createMBean();
+    //...
+}
+```
+
+createMBean方法其实创建了一个org.apache.tomcat.jdbc.pool.jmx.ConnectionPool对象:
+
+```java
+protected void createMBean() {
+    jmxPool = new org.apache.tomcat.jdbc.pool.jmx.ConnectionPool(this);
+}
+```
+
+这个对象便是一个MBean，类图:
+
+![ConnectionPool Mbean](images/jmx_connection_pool.png)
+
+从继承体系中可以看出，通过jmx可以观察到大多数连接池的属性，使用jconsole连接可以看到如下监控:
+
+![jconsole监控](images/jmx_jconsole.png)
+
+这里使用的是基于Spring的配置，如下:
+
+```xml
+<bean class="org.springframework.jmx.export.MBeanExporter">
+    <property name="beans">
+        <map>
+            <entry key="org.apache.tomcat.jdbc.pool.jmx:type=ConnectionPool" value="#{dataSource.getPool().getJmxPool()}"/>
+        </map>
+    </property>
+</bean>
+```
+
+特别地，我们来看一下tomcat-jdbc向监听器发送了哪些消息，消息的发送通过org.apache.tomcat.jdbc.pool.jmx.Notify方法完成，其调用位置如下:
+
+![Notify调用](images/notify_usage.png)
+
+可以看出，连接的获取、回收以及连接池的初始化甚至慢查询统计拦截器都会发送监听消息。
+
+## Spring工具类
+
+下面看一下Spring提供的MBeanExporter到底是怎么工作的(做了什么不用再说了)。类图:
+
+![MBeanExporter](images/MBeanExporter.png)
+
+用后脚跟也能想到，初始化必定是由实现的各种Spring生命周期相关的接口触发的。
+
+### MBeanServer初始化
+
+这个动作由afterPropertiesSet触发:
+
+```java
+
+```
