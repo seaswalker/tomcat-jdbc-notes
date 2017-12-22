@@ -17,7 +17,8 @@
 public class CustomerDataSource {
     @Init
     public void initProperties() {
-       properties.setJdbcInterceptors("org.apache.tomcat.jdbc.pool.interceptor.ConnectionState;"                + "org.apache.tomcat.jdbc.pool.interceptor.StatementFinalizer");
+       properties.setJdbcInterceptors("org.apache.tomcat.jdbc.pool.interceptor.ConnectionState;" + 
+            "org.apache.tomcat.jdbc.pool.interceptor.StatementFinalizer");
         this.dataSource = new DataSource();
         this.dataSource.setPoolProperties(properties);
     }
@@ -512,7 +513,8 @@ private PooledConnection borrowConnection(int wait, String username, String pass
         if (con == null) {
             if ((System.currentTimeMillis() - now) >= maxWait) {
                 throw new PoolExhaustedException("[" + Thread.currentThread().getName()+"] " +
-                    "Timeout: Pool empty. Unable to fetch a connection in " + (maxWait / 1000)                      +" seconds, none available[size:"+size.get() +"; busy:"+busy.size()+
+                    "Timeout: Pool empty. Unable to fetch a connection in " + (maxWait / 1000) +
+                    " seconds, none available[size:"+size.get() +"; busy:"+busy.size()+
                     "; idle:"+idle.size()+"; lastwait:"+timetowait+"].");
             } else {
                 //no timeout, lets try again
