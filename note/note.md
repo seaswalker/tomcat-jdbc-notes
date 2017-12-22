@@ -718,5 +718,94 @@ protected void createMBean() {
 这个动作由afterPropertiesSet触发:
 
 ```java
-
+@Override
+public void afterPropertiesSet() {
+    // If no server was provided then try to find one. This is useful in an environment
+    // where there is already an MBeanServer loaded.
+    if (this.server == null) {
+        this.server = JmxUtils.locateMBeanServer();
+    }
+}
 ```
+
+真正的实现逻辑位于JmxUtils.locateMBeanServer方法，简略版源码:
+
+```java
+public static MBeanServer locateMBeanServer(String agentId) {
+    MBeanServer server = null;
+
+    // null means any registered server, but "" specifically means the platform server
+    if (!"".equals(agentId)) {
+        List<MBeanServer> servers = MBeanServerFactory.findMBeanServer(agentId);
+        if (servers != null && servers.size() > 0) {
+            // Check to see if an MBeanServer is registered.
+            if (servers.size() > 1 && logger.isWarnEnabled()) {
+                logger.warn("Found more than one MBeanServer instance" +
+                        (agentId != null ? " with agent id [" + agentId + "]" : "") +
+                        ". Returning first from list.");
+            }
+            server = servers.get(0);
+        }
+    }
+
+    if (server == null && !StringUtils.hasLength(agentId)) {
+        try {
+            server = ManagementFactory.getPlatformMBeanServer();
+        } catch (SecurityException ex) {
+            throw new MBeanServerNotFoundException("");
+        }
+    }
+
+    return server;
+}
+```
+
+逻辑一目了然，如果给定了agentId参数，那么根据此值进行查找，否则使用默认。
+
+### 注册
+
+MBeanExporter通过afterSingletonsInstantiated方法进行M(X)Bean和监听器的注册工作:
+
+```java
+@Override
+public void afterSingletonsInstantiated() {
+    registerBeans();
+    registerNotificationListeners();
+}
+```
+
+#### bean注册
+
+这一步很简单，就是将我们配置的MBeanExporter中的beans属性所包含的全部注册到MBeanServer中。Spring还支持自动检测机制，可以通过MBeanExporter的下列属性开启:
+
+```xml
+<property name="autodetect" value="true" />
+```
+
+自动检测有两种方式:
+
+- 根据实现的接口:
+
+```java
+public static boolean isMBean(Class<?> clazz) {
+    return (clazz != null &&
+            (DynamicMBean.class.isAssignableFrom(clazz) ||
+                    (getMBeanInterface(clazz) != null || getMXBeanInterface(clazz) != null)));
+}
+```
+
+- Spring ManagedResource注解，任何被此注解标注的类都将被Spring注册到jmx中。
+
+自动检测时Spring将遍历所有bean。
+
+#### listener注册
+
+很简单，就是将notificationListeners中的所有东西注册到MBeanServer中，此属性可以通过以下配置进行确定:
+
+```xml
+<property name="notificationListeners" value="sampleListeners" />
+```
+
+### 总结
+
+MBeanExporter只是一个工具，一个让我们不必手动创建MbeanServer并对MBean进行注册的工具。
